@@ -27,15 +27,12 @@ class TodoList extends Component {
     render() {
         return (
             <div className = "todo-list" > {
-                            Object.keys(this.state.todo).map(i => (this.state[i].done ? '' : < Todo timeFrame = {
-                                        this.state[i].time
-                                    }
-                                    urgency = {
-                                        this.state[i].urgency
-                                    }
-				    check={(() =>this.check(i);)}>
-				    {this.state[i].text}
-				    </Todo>))
+		    Object.keys(this.state.todo).map(i => (this.state[i].done ? '' :
+			    <Todo timeFrame = {this.state[i].time}
+			    urgency = {this.state[i].urgency}
+			    check={() =>this.check(i)}>
+			    	{this.state[i].text}
+			    </Todo>))
 			}
 		    </div>);
     }
