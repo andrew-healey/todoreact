@@ -30,3 +30,17 @@
     transform: rotate(360deg);
   }
 }
+.Todo{
+  border-top:2px solid black;
+  display:flex;
+  justify-content:center;
+}
+.TodoList{
+  display:flex;
+  flex-flow:column nowrap;
+  align-items:stretch;
+  margin:auto;
+}
+.MutableValue {
+  border-right:2px solid aqua;
+}
