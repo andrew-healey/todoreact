@@ -120,5 +120,8 @@
     "presets": [
       "react-app"
     ]
+  },
+  "engines": {
+    "node": "10.3.0"
   }
 }
