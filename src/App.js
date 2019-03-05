@@ -20,32 +20,34 @@ class TodoList extends Component {
   }
   componentDidMount() {
     this.socket = io();
+    this.socket.on("connect-list reject",()=>alert("Error"));
+    this.socket.on("connect-list reject",()=>alert("Error"));
     this.socket.on("list-content", content => {
-      if(content===null){
+      if (content === null) {
         alert("Error: List does not exist");
       }
       content = JSON.parse(content);
-      console.log("Received content is ", content);
-      console.log(typeof content);
       this.setState({
         todo: content
       });
-      console.log("done");
     });
     this.urlParams = new URLSearchParams(window.location.search);
     let key = this.urlParams.get("key");
-    console.log("key is", key);
-    if (key !== null) {
+    let adminKey = this.urlParams.get("adminKey");
+    let copyKey=this.urlParams.get("copyKey");
+    if (adminKey !== null) {
+      this.socket.emit("connect-list", adminKey, true);
+    } else if (key !== null) {
       this.socket.emit("connect-list", key);
+      
     } else {
-      this.socket.on("list-key", key => {
-        console.log("list-key with", key);
+      this.socket.on("list-keys", (adminKey, key) => {
+        window.history.pushState("", "", "?adminKey=" + adminKey);
         this.setState({
           key
         });
       });
-      console.log("Emitting create-list");
-      this.socket.emit("create-list", "Homework");
+      this.socket.emit("create-list", "Homework",copyKey);
     }
     /*this.setState({todo:JSON.parse(document.cookie||"{}")});
     window.onbeforeunload=()=>{
@@ -53,17 +55,17 @@ class TodoList extends Component {
     }*/
   }
   render() {
-    console.log("todo is",this.state.todo);
     let todos = this.state.todo.map((i, index) => (
       <Todo timeFrame={i.time}
               key={index}
               urgency={i.urgency}
+              due={i.due}
 	      color={i.color}
               checked={i.checked}
 	      update={(name,value)=>this.update(index,name,value)}
-	      check={() => this.check(i)} text={i.text}
+	      check={() => this.check(index)} text={i.text}
      	      editing={i.editing} 
-	      delete={()=>this.delete(i)}
+	      delete={()=>this.delete(index)}
             />));
     return (
       <div className="TodoList">
@@ -71,12 +73,11 @@ class TodoList extends Component {
 	{todos.length===0?"Press the Plus button below to add a Todo.":todos
         }
 	<h1 style={{fontSize:"50px"}} onClick={()=>this.addTodo()}>+</h1>
-  {this.state.hasOwnProperty("key")?<a href={"/?key="+this.state.key}>Share</a>:undefined}
+  {this.state.hasOwnProperty("key")?<><a href={"/?key="+this.state.key}>Share</a><a href={"/?copyKey="+this.state.key}>Copy</a></>:undefined}
       </div>)
   }
   componentDidUpdate() {
     if (this.toSend) {
-      console.log("Sending ", this.toSend);
       this.socket.emit("edit-item", ...this.toSend);
       this.toSend = false;
 
@@ -95,7 +96,7 @@ class TodoList extends Component {
     });
   }
   addTodo() {
-    let newTodo = this.Todo("", "", "", "", "white");
+    let newTodo = this.Todo("", "", "", "", "","white");
     this.setState({
       todo: [...this.state.todo, newTodo]
     });
@@ -103,11 +104,10 @@ class TodoList extends Component {
   }
   check(id) {
     let newTodoState = this.state.todo;
-    newTodoState[id].checked = !newTodoState[id];
+    newTodoState[id].checked = !newTodoState[id].checked;
     this.setState({
       todo: newTodoState
     });
-    console.log("idContent is ", newTodoState);
     this.socket.emit("edit-item", id, JSON.stringify(newTodoState[id]));
   }
   delete(id) {
@@ -117,25 +117,25 @@ class TodoList extends Component {
     });
     this.socket.emit("delete-item", id);
   }
-  Todo(text, time, urgency, color) {
+  Todo(text, time, urgency,due, color) {
     return ({
       time,
       urgency,
       color,
       text,
       checked: false,
+      due,
       editing: true
     });
   }
   update(id, name, value) {
     let todo = this.state.todo;
-    console.log(todo, id, todo[id]);
     todo[id][name] = value;
     this.setState({
       todo
     });
     if (name === "editing") {
-      this.toSend = [id,JSON.stringify(todo[id])];
+      this.toSend = [id, JSON.stringify(todo[id])];
     }
   }
 }
@@ -157,11 +157,11 @@ class Todo extends Component {
   componentDidMount() {
     this.refs.checkBox.checked = this.props.checked;
   }
-  componentDidUpdate(){
+  componentDidUpdate() {
     this.componentDidMount();
   }
   render() {
-    this.state.editing=this.props.editing;
+    this.state.editing = this.props.editing;
     return <div className="Todo" style={{backgroundColor:this.props.checked?"lightgreen":this.props.color}}>
       <span className="checkContainer">
         <input className="check MutableValue"
@@ -188,6 +188,7 @@ class Todo extends Component {
           this.props.timeFrame
 		} callback={val=>this.props.update("time",val)} editing={this.state.editing} />
 	</span>
+          <span>Due: <MutableValue callback={val=>this.props.update("due",val)} editing={this.state.editing} value={this.props.due} /></span>
         <span className="MutableValue">
 	<input type="button" value="✎" onClick={()=>{this.toggleEdit();}}/>
 		    </span>
@@ -208,7 +209,7 @@ class MutableValue extends Component {
     this.onChange = this.onChange.bind(this);
   }
   render() {
-    this.state.value=this.props.value;
+    this.state.value = this.props.value;
     return <span className="MutableValue">{this.props.editing ?
 		    (<input type={this.props.type||"text"} placeholder={this.props.name||""} value={this.props.value} size={this.state.value.length} onChange={this.onChange}/>) :
 			    (this.props.hidden===true?undefined:this.state.value)}</span>;

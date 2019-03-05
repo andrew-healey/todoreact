@@ -1,4 +1,5 @@
 const express = require("express");
+const bcrypt = require("bcrypt");
 const bodyParser = require("body-parser");
 const db = require("./db");
 const app = express();
@@ -16,6 +17,7 @@ let ALL_LISTS = {};
 
 /**
  * Handles client-server communications.
+ * @todo merge this with the TodoList class for better, cleaner code
  */
 io.sockets.on("connection", socket => {
   //Unique ID for each socket connection, stored in ALL_USERS
@@ -28,33 +30,41 @@ io.sockets.on("connection", socket => {
   /**
    * Controls user creation of their own lists.
    */
-  socket.on("connect-list", async (key = "") => {
+  socket.on("connect-list", async (key = "", admin = false) => {
     let list;
-
-    //Lock the user into this list specifically.
-    lockToList(socket);
-    addAppend(socket, list);
 
     //Reuse list reference if possible; if not, make a new one. Uses ALL_LISTS
     if (ALL_LISTS.hasOwnProperty(key)) {
       ALL_LISTS[key].users.push(id);
       list = ALL_LISTS[key];
     } else {
-      let dbConnection = await db.AuthTodo(key);
-      if (!dbConnection) return socket.emit("connect-list reject");
+      let dbConnection;
+      try {
+        dbConnection = await db.AuthTodo(key, admin);
+      } catch (err) {
+        return socket.emit("connect-list reject");
+      }
       list = {
-        key: key,
-        db: thisDb,
+        [admin ? "adminKey" : "key"]: key,
+        db: dbConnection,
         appendContent: function(content) {
           this.db.appendContent(content);
           this.sendContent(content);
         },
         users: [id],
         sendContent,
-        getContent
+        getContent,
+        setContent
       };
       ALL_LISTS[key] = list;
     }
+    let dbContent = (await list.db.getContent());
+    list.content = JSON.parse(dbContent);
+
+    //Lock the user into this list specifically.
+    lockToList(socket);
+    addAppend(socket, list);
+
     //Broadcast the current contents of the list.
     list.getContent(id);
 
@@ -62,53 +72,41 @@ io.sockets.on("connection", socket => {
   /**
    * Controls user creation of their own lists. Allows for deletion, editing and appending. Name creation is not yet supported.
    */
-  socket.on("create-list", async (name) => {
+  socket.on("create-list", async (name, keyToClone) => {
+    let adminKey = saltShaker();
+    let key = saltShaker();
+    let adminHash = await bcrypt.hash(adminKey, 1);
+    let hash = await bcrypt.hash(key, 1);
 
     let list = {
-      key: saltShaker(),
+      adminHash,
+      hash,
       name: name,
-      contents: [],
+      content: [],
       users: [id],
       sendContent,
-      getContent
+      getContent,
+      setContent
     };
 
     lockToList(socket);
-    addAppend(socket, list,false);
+    addAppend(socket, list);
 
-    list.db = await db.TodoList(list);
+    list.db = await db.TodoList(list, keyToClone);
     ALL_LISTS[list.key] = list;
-
-    /**
-     * Update content in the database and for all active users.
-     */
-    list.setContent = async function(content) {
-      await this.db.setContent(content);
-      this.sendContent(content);
-      list.db.setContent(content);
-    };
+    await list.getContent(id);
 
     /**
      * Delete item.
      * @param index {Number} - The index in the array of the todo to delete.
      */
     socket.on("delete-item", (index) => {
-      if (!index && index > list.contents.length) return;
-      list.contents = list.contents.splice(0, index).concat(index < list.contents.length ? list.contents.splice(index + 1) : []);
-      list.setContent(list.contents);
+      if (!index && index > list.content.length) return;
+      list.content = list.content.splice(0, index).concat(index < list.content.length ? list.content.splice(index + 1) : []);
+      list.setContent(list.content);
     });
 
-    /**
-     * Overwrite item in the list.
-     * @param index {Number} - The index in the array of the todo to edit.
-     * @param contents {string} - The stringified version of the updated version of the element.
-     */
-    socket.on("edit-item", (index, contents = "{}") => {
-      list.contents[index] = JSON.parse(contents);
-      list.setContent(list.contents);
-    });
-
-    socket.emit("list-key", list.key);
+    socket.emit("list-keys", adminKey, key);
   });
 
   socket.on("disconnect", () => {
@@ -149,30 +147,27 @@ async function getContent(...users) {
  * @param list {Object} - The todo list object whose editing functionalities will be used.
  * @param reducedPrivileges {boolean} - If the socket should have limited editing priveleges.
  */
-function addAppend(socket, list,reducedPrivileges=true) {
+function addAppend(socket, list, reducedPrivileges = true) {
 
   socket.on("append-item", (contents = "{}") => {
-    list.contents.push(JSON.parse(contents));
-    list.setContent(list.contents);
+    console.log("first, list.content is", list.content);
+    list.content.push(JSON.parse(contents));
+    console.log("then, list.content is", list.content);
+    list.setContent(list.content);
   });
 
-  if(!reducedPrivileges) return;
+  if (!reducedPrivileges) return;
 
   /**
    * Edit an item with reduced privileges, specifically only being able to edit blank todos.
    * @param id {Number} - The index of the todo to edit.
    * @param contents {string} - The stringified version of the todo object.
    */
-  socket.on("edit-item", (id, contents = "{}") => {
+  socket.on("edit-item", async (id, contents = "{}") => {
     contents = JSON.parse(contents);
-    let otherContents = list.contents[id];
-    for (i of ["text", "urgency", "time", "color"]) {
-      if (otherContents[i] === "") continue;
-      return;
-    }
-    list.contents[id] = contents;
-    list.db.setContent(list.contents);
-    list.sendContent(list.contents);
+    let res = await list.db.editItem(id, contents);
+    list.content[id] = contents;
+    if (res) list.sendContent(res);
   });
 }
 
@@ -183,4 +178,9 @@ function addAppend(socket, list,reducedPrivileges=true) {
 function lockToList(socket) {
   socket.on("connect-list", () => socket.emit("connect-list reject"));
   socket.on("create-list", () => socket.emit("create-list reject"));
+}
+
+async function setContent(content) {
+  await this.db.setContent(content);
+  this.sendContent(content);
 }
