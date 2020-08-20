@@ -11,7 +11,7 @@
     "babel-loader": "8.0.4",
     "babel-plugin-named-asset-import": "^0.3.0",
     "babel-preset-react-app": "^7.0.0",
-    "bcrypt": "^3.0.4",
+    "bcrypt": "^5.0.0",
     "bfj": "6.1.1",
     "body-parser": "^1.18.3",
     "case-sensitive-paths-webpack-plugin": "2.1.2",
